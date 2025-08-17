@@ -24,7 +24,7 @@ user_sessions = {}
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Helper Functions (Unchanged) ---
+# --- Helper Functions ---
 
 def get_today_info():
     """Get today's date information in multiple formats."""
@@ -73,26 +73,75 @@ def add_to_history(phone_number, role, message):
     if len(session['conversation_history']) > 10:
         session['conversation_history'] = session['conversation_history'][-10:]
 
-# --- LLM and Authentication Functions (Unchanged) ---
+def detect_greeting(message):
+    """Detect common greetings in the user's message."""
+    greetings = {
+        "hello": "Hello! Welcome to EO Goa! 🚀", 
+        "hi": "Hi there! Welcome to EO Goa! 🚀",
+        "hey": "Hey! Welcome to EO Goa! 🚀",
+        "good morning": "Good morning! Welcome to EO Goa! 🚀",
+        "good afternoon": "Good afternoon! Welcome to EO Goa! 🚀",
+        "good evening": "Good evening! Welcome to EO Goa! 🚀",
+        "namaste": "Namaste! Welcome to EO Goa! 🚀",
+        "namaskar": "Namaskar! Welcome to EO Goa! 🚀",
+    }
+    message_lower = message.lower().strip()
+    for greeting, response in greetings.items():
+        if greeting in message_lower:
+            return response
+    return None
+
+def detect_help_request(message):
+    """Detect if user is asking what the bot can help with."""
+    help_keywords = ["help", "what can you do", "what do you help with", "services", "features", "capabilities", "assist"]
+    message_lower = message.lower().strip()
+    for keyword in help_keywords:
+        if keyword in message_lower:
+            return True
+    return False
+
+def get_bot_capabilities():
+    """Return the list of bot capabilities."""
+    return """🤖 *Here's what I can help you with:*
+
+1️⃣ *Birthday/Anniversary* - Member birthdays and anniversaries
+2️⃣ *Strategic Alliances* - Partnership opportunities and collaborations  
+3️⃣ *Upcoming Events* - Event schedules and details
+4️⃣ *Member Engagement System* - Community activities and participation
+5️⃣ *Annual Fees* - Membership fee information and payment details
+6️⃣ *Event Photos & Videos* - Access to event media and memories
+7️⃣ *Member Details* - Contact information and member directory
+
+💬 Just ask me about any of these topics, and I'll be happy to help!
+
+_Example: "Show me upcoming events" or "When is John's birthday?"_"""
+
+# --- LLM and Authentication Functions ---
 
 def call_llm(prompt, max_tokens=500):
-    """Call Gemini API with the given prompt, wrapped in your original system instructions."""
+    """Call Gemini API with the given prompt, wrapped in EO Goa system instructions."""
     try:
         today_info = get_today_info()
         
-        system_instructions = f"""You are a helpful assistant for EO Goa members. 
+        system_instructions = f"""You are a helpful and professional AI assistant for EO Goa (Entrepreneurs' Organization - Goa Chapter).
 
 Today's Date Information:
 - Today is: {today_info['formatted_readable']}
 
-Guidelines:
-- Be friendly, professional, and concise for WhatsApp.
-- Use emojis and WhatsApp formatting (*bold*, _italic_) appropriately.
-- Base your answers strictly on the provided content. If info isn't there, say so.
-- For authentication, be VERY lenient with matching names and dates as instructed.
+Your personality and guidelines:
+- Act like a friendly, professional receptionist for EO Goa
+- Be warm, welcoming, and entrepreneurial in tone
+- Use appropriate WhatsApp formatting (*bold*, _italic_) and emojis
+- Keep responses concise but comprehensive for WhatsApp
+- Always respond in English and maintain a professional tone
+- For any topics unrelated to EO, entrepreneurship, business, or networking, politely redirect back to EO Goa topics
+- Base your answers strictly on the provided content/FAQ
 - When asked about events "today", check against today's date: {today_info['formatted_date']}
+- If information isn't in the content, politely say so and offer to help with other EO-related queries
 
-User Query and Content:
+Remember: You're representing EO Goa - a global community of successful entrepreneurs focused on learning, networking, and growth.
+
+User Query and Available Content:
 ---
 """
         
@@ -115,17 +164,17 @@ User Query and Content:
             return result['candidates'][0]['content']['parts'][0]['text'].strip()
         else:
             logger.error(f"Unexpected Gemini response format: {result}")
-            return "I'm having trouble processing your request right now."
+            return "I'm having trouble processing your request right now. Please try again."
     
     except requests.exceptions.RequestException as e:
         logger.error(f"Gemini API request failed: {e}")
-        return "I'm having trouble connecting to the AI service."
+        return "I'm having trouble connecting right now. Please try again in a moment."
     except Exception as e:
         logger.error(f"LLM call failed: {e}", exc_info=True)
-        return "I'm having trouble processing your request right now."
+        return "I'm having trouble processing your request right now. Please try again."
 
 def authenticate_user(user_input, content):
-    """Your original, proven authentication function."""
+    """Authenticate user with VERY LENIENT matching criteria."""
     auth_prompt = f"""
 You are authenticating a user for EO Goa member support with VERY LENIENT matching criteria.
 
@@ -135,11 +184,11 @@ Available member database and content:
 {content}
 
 Authentication Instructions - BE VERY LENIENT:
-1.  Look for member information (names, DOBs).
-2.  For NAME matching, accept: First names only, partial names, nicknames, typos.
-3.  For DATE matching, accept ANY format: DD-MM-YYYY, DD/MM/YY, 15 March, etc.
-4.  If partial info matches 2-3 people, ask for more detail.
-5.  Response format:
+1. Look for member information (names, DOBs).
+2. For NAME matching, accept: First names only, partial names, nicknames, typos.
+3. For DATE matching, accept ANY format: DD-MM-YYYY, DD/MM/YY, 15 March, etc.
+4. If partial info matches 2-3 people, ask for more detail.
+5. Response format:
     - If confident match found: "MATCH_FOUND: [member_name]"
     - If multiple possible matches: "MULTIPLE_MATCHES: [list names] - Please specify which one"
     - If partial match needs clarification: "NEED_MORE_INFO: [specific question]"
@@ -150,29 +199,42 @@ REMEMBER: Be generous! It's better to authenticate a real member with partial in
     return call_llm(auth_prompt, max_tokens=300)
 
 def handle_authenticated_query(question, member_data, content, conversation_history):
-    """Handles an authenticated user's query by finding the answer in the provided content."""
-    history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history[-5:]])
+    """Handle an authenticated user's query using EO Goa conversational style."""
+    # Check for greeting first
+    greeting_response = detect_greeting(question)
+    if greeting_response:
+        member_name = member_data.get('name', 'there')
+        return f"{greeting_response}\n\n*Welcome back, {member_name}!* 😊\n\nHow may I assist you with EO Goa today?"
+    
+    # Check for help request
+    if detect_help_request(question):
+        return get_bot_capabilities()
+    
+    # Build conversation context
+    history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history[-6:]])
 
     query_prompt = f"""
-An authenticated EO Goa member has a question.
-User's Question: "{question}"
+An authenticated EO Goa member has asked: "{question}"
 
-Your task is to answer this question using ONLY the full content provided below.
-The content includes all available information: member details, events, birthdays, photo links, etc.
-Search the entire content to find the answer.
-If the information to answer the question is not in the content, you MUST state that you cannot find the information.
+Your task is to answer this question using the provided content/FAQ, maintaining the friendly EO Goa receptionist tone.
 
---- FULL CONTENT START ---
+Available Content/FAQ:
 {content}
---- FULL CONTENT END ---
 
-Additional context for you (do not state this to the user):
-- Authenticated Member Name: {member_data.get('name', 'N/A')}
-- Recent Conversation History:
+Recent Conversation History:
 {history_context}
+
+Member Information:
+- Authenticated Member: {member_data.get('name', 'N/A')}
+
+Instructions:
+- Answer based on the content provided
+- If the information isn't available, politely say so and offer to help with other EO-related queries
+- Maintain a warm, professional, entrepreneurial tone
+- Keep responses concise for WhatsApp
+- Use appropriate formatting and emojis
 """
     return call_llm(query_prompt, max_tokens=400)
-
 
 # --- Routes ---
 
@@ -186,12 +248,9 @@ def health_check():
         "gemini_api_configured": bool(GEMINI_API_KEY)
     }), 200
 
-# ===============================================================
-# === THIS IS THE CORRECTED AND RE-WRITTEN FUNCTION ===
-# ===============================================================
 @app.route('/twilio_webhook', methods=['POST'])
 def twilio_webhook():
-    """Main WhatsApp webhook handler with a more robust and direct authentication flow."""
+    """Main WhatsApp webhook handler with enhanced conversation layer."""
     phone_number = request.form.get('From', '').replace('whatsapp:', '')
     message_body = request.form.get('Body', '').strip()
     
@@ -203,73 +262,108 @@ def twilio_webhook():
     today_info = get_today_info()
     
     try:
-        # --- 1. Handle Reset/Menu Commands (Unchanged) ---
+        # --- 1. Handle Reset/Menu Commands ---
         if message_body.lower() in ['reset', 'restart', 'start', 'hi', 'hello', 'main', 'menu', '9']:
             user_sessions.pop(phone_number, None)
             session = get_user_session(phone_number)
             
             if message_body.lower() in ['hi', 'hello', 'start']:
-                response_text = f"👋 *Welcome to EO Goa Member Support!*\n\n📅 Today is {today_info['formatted_readable']}\n\nTo access member information, please provide your *name and date of birth* (e.g., *John Doe, 15-03-1985*)."
+                response_text = f"""🚀 *Welcome to EO Goa!*
+
+I'm your EO Goa assistant, here to help you connect with our community of successful entrepreneurs.
+
+📅 Today is {today_info['formatted_readable']}
+
+Join a global community by entrepreneurs, for entrepreneurs, designed to help business owners take their leadership and companies to the next level.
+
+🔐 To access member information, please provide your *name and date of birth* (e.g., *John Doe, 15-03-1985*).
+
+*Connect • Learn • Grow* 🌟"""
             else:
-                menu_prompt = f"Extract and format the main menu from the full content below for a WhatsApp display.\n\n---CONTENT---\n{content}"
+                menu_prompt = f"Extract and format the main menu from the full content below for WhatsApp display. Keep it concise and well-formatted.\n\n---CONTENT---\n{content}"
                 response_text = call_llm(menu_prompt, max_tokens=300)
 
-        # --- 2. Handle Authenticated Users (Unchanged) ---
+        # --- 2. Handle Authenticated Users ---
         elif session['authenticated']:
-            # User is already authenticated, so just answer their question.
+            # User is already authenticated, handle their query with enhanced conversation layer
             response_text = handle_authenticated_query(message_body, session['member_data'], content, session['conversation_history'])
 
-        # --- 3. Handle Unauthenticated Users (THIS IS THE NEW, CORRECTED LOGIC) ---
+        # --- 3. Handle Unauthenticated Users ---
         else:
-            # For any unauthenticated user, we ALWAYS try to authenticate them first.
+            # Try to authenticate first
             auth_result = authenticate_user(message_body, content)
             
             if auth_result.startswith("MATCH_FOUND:"):
-                # SUCCESS! User is authenticated.
+                # SUCCESS! User is authenticated
                 member_name = auth_result.split("MATCH_FOUND:", 1)[1].strip()
                 session['authenticated'] = True
                 session['member_data'] = {"name": member_name}
-                session['auth_attempts'] = 0 # Reset attempts on success
+                session['auth_attempts'] = 0
                 
-                welcome_msg = f"✅ *Welcome, {member_name}!* You're now authenticated."
+                welcome_msg = f"""✅ *Welcome, {member_name}!* 
+
+You're now authenticated and ready to explore EO Goa! 🚀
+
+I'm here to help you with our entrepreneur community. """
                 
-                # Now, check if there was a question they asked BEFORE this successful auth.
+                # Check for pending question
                 if session.get('pending_question'):
                     question = session.pop('pending_question')
+                    # Process the pending question with full conversation layer
                     answer = handle_authenticated_query(question, session['member_data'], content, session['conversation_history'])
                     response_text = f"{welcome_msg}\n\nRegarding your earlier question:\n> \"_{question}_\"\n\n{answer}"
                 else:
-                    # They authenticated directly, no pending question.
-                    response_text = f"{welcome_msg}\n\nHow can I help you today?"
+                    # Check if their auth message was also a greeting or help request
+                    greeting_response = detect_greeting(message_body)
+                    if greeting_response:
+                        response_text = f"{welcome_msg}\n\nHow may I assist you today? 😊"
+                    elif detect_help_request(message_body):
+                        capabilities = get_bot_capabilities()
+                        response_text = f"{welcome_msg}\n\n{capabilities}"
+                    else:
+                        response_text = f"{welcome_msg}\n\nHow may I assist you today? Feel free to ask about events, members, or anything EO Goa related!"
 
             elif auth_result.startswith("MULTIPLE_MATCHES:") or auth_result.startswith("NEED_MORE_INFO:"):
-                # Authentication in progress, needs clarification from the user.
+                # Authentication in progress
                 response_text = f"🤔 {auth_result.split(':', 1)[1].strip()}"
                 session['auth_attempts'] += 1
             
             else: # NO_MATCH
-                # Authentication failed. Now we decide what to do.
                 session['auth_attempts'] += 1
 
-                # If this was their VERY FIRST message (auth_attempts is now 1),
-                # we assume it was a question, not a failed login attempt.
+                # If this was their first message, treat it as a question
                 if session['auth_attempts'] == 1 and not session.get('pending_question'):
-                    session['pending_question'] = message_body
-                    response_text = (f"👍 *Sure, I can help with that!* But first, I need to verify your identity.\n\n"
-                                     f"> \"_{message_body}_\"\n\n"
-                                     f"🔐 Please provide your *name and date of birth* to continue.")
+                    # Check if it's a greeting - provide friendly response
+                    greeting_response = detect_greeting(message_body)
+                    if greeting_response:
+                        response_text = f"""{greeting_response}
+
+I'd love to help you explore our entrepreneur community! 
+
+🔐 To get started, please provide your *name and date of birth* for authentication (e.g., *John Doe, 15-03-1985*)."""
+                    else:
+                        session['pending_question'] = message_body
+                        response_text = f"""👍 *Great question!* I'd be happy to help with that.
+
+> \"_{message_body}_\"
+
+🔐 First, I need to verify your identity. Please provide your *name and date of birth* to continue (e.g., *John Doe, 15-03-1985*)."""
                 else:
-                    # This is a genuine failed authentication attempt (2nd or 3rd try).
+                    # Genuine failed authentication attempt
                     if session['auth_attempts'] >= 3:
-                        response_text = "❌ *Authentication failed* after multiple attempts. Please contact the admin or type 'reset' to try again."
-                        session.pop('pending_question', None) # Clear any saved question
+                        response_text = "❌ *Authentication failed* after multiple attempts. Please contact the admin or type 'reset' to start over."
+                        session.pop('pending_question', None)
                     else:
                         attempts_left = 3 - session['auth_attempts']
-                        response_text = f"❌ I couldn't match those details. Please try again.\n\n_You have {attempts_left} attempt(s) remaining._"
+                        response_text = f"""❌ I couldn't match those details in our member database.
+
+Please try again with your *full name and date of birth*.
+
+_You have {attempts_left} attempt(s) remaining._"""
 
     except Exception as e:
         logger.error(f"Error in webhook for {phone_number}: {e}", exc_info=True)
-        response_text = "😔 An unexpected error occurred. Please try again."
+        response_text = "😔 An unexpected error occurred. Please try again or contact support."
     
     add_to_history(phone_number, 'assistant', response_text)
     
@@ -277,10 +371,6 @@ def twilio_webhook():
     twiml_response.message(response_text)
     
     return str(twiml_response)
-# ===============================================================
-# === END OF CORRECTED FUNCTION ===
-# ===============================================================
-
 
 @app.route('/sessions', methods=['GET'])
 def get_sessions():
@@ -289,7 +379,6 @@ def get_sessions():
         'active_sessions': len(user_sessions),
         'sessions': user_sessions
     })
-
 
 if __name__ == '__main__':
     if not GEMINI_API_KEY:
