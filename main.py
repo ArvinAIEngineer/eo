@@ -74,7 +74,7 @@ def add_to_history(phone_number, role, message):
         session['conversation_history'] = session['conversation_history'][-10:]
 
 def detect_greeting(message):
-    """Detect common greetings in the user's message."""
+    """Detect common greetings in the user's message - must be standalone greetings."""
     greetings = {
         "hello": "Hello! Welcome to EO Goa! 🚀", 
         "hi": "Hi there! Welcome to EO Goa! 🚀",
@@ -86,9 +86,12 @@ def detect_greeting(message):
         "namaskar": "Namaskar! Welcome to EO Goa! 🚀",
     }
     message_lower = message.lower().strip()
-    for greeting, response in greetings.items():
-        if greeting in message_lower:
-            return response
+    
+    # Only detect if the greeting is at the start and the message is short (likely just a greeting)
+    if len(message_lower.split()) <= 3:
+        for greeting, response in greetings.items():
+            if message_lower.startswith(greeting):
+                return response
     return None
 
 def detect_help_request(message):
@@ -96,6 +99,19 @@ def detect_help_request(message):
     help_keywords = ["help", "what can you do", "what do you help with", "services", "features", "capabilities", "assist"]
     message_lower = message.lower().strip()
     for keyword in help_keywords:
+        if keyword in message_lower:
+            return True
+    return False
+
+def detect_birthday_query(message):
+    """Detect if user is asking about birthdays."""
+    birthday_keywords = [
+        "birthday", "birthdays", "bday", "b'day", "born", 
+        "birthday this month", "birthdays today", "who has birthday",
+        "birthday list", "celebrating", "birth date"
+    ]
+    message_lower = message.lower().strip()
+    for keyword in birthday_keywords:
         if keyword in message_lower:
             return True
     return False
@@ -114,7 +130,7 @@ def get_bot_capabilities():
 
 💬 Just ask me about any of these topics, and I'll be happy to help!
 
-_Example: "Show me upcoming events" or "When is John's birthday?"_"""
+_Example: "Show me upcoming events" or "Show birthdays this month"_"""
 
 # --- LLM and Authentication Functions ---
 
@@ -127,6 +143,8 @@ def call_llm(prompt, max_tokens=500):
 
 Today's Date Information:
 - Today is: {today_info['formatted_readable']}
+- Current month: {today_info['month_name']} ({today_info['month']})
+- Current year: {today_info['year']}
 
 Your personality and guidelines:
 - Act like a friendly, professional receptionist for EO Goa
@@ -137,7 +155,9 @@ Your personality and guidelines:
 - For any topics unrelated to EO, entrepreneurship, business, or networking, politely redirect back to EO Goa topics
 - Base your answers strictly on the provided content/FAQ
 - When asked about events "today", check against today's date: {today_info['formatted_date']}
-- If information isn't in the content, politely say so and offer to help with other EO-related queries
+- For birthday queries, extract all relevant birthday information from the content
+- If information isn't in the content, clearly state "This information is not available in my current database"
+- Always be helpful and offer alternative assistance
 
 Remember: You're representing EO Goa - a global community of successful entrepreneurs focused on learning, networking, and growth.
 
@@ -174,37 +194,49 @@ User Query and Available Content:
         return "I'm having trouble processing your request right now. Please try again."
 
 def authenticate_user(user_input, content):
-    """Authenticate user with VERY LENIENT matching criteria."""
+    """Authenticate user by checking if their name and DOB match anyone in the member database."""
     auth_prompt = f"""
-You are authenticating a user for EO Goa member support with VERY LENIENT matching criteria.
+You are checking if a user's authentication details match any member in the EO Goa database.
 
-User provided information: "{user_input}"
+User provided: "{user_input}"
 
-Available member database and content:
+Member Database Content:
 {content}
 
-Authentication Instructions - BE VERY LENIENT:
-1. Look for member information (names, DOBs).
-2. For NAME matching, accept: First names only, partial names, nicknames, typos.
-3. For DATE matching, accept ANY format: DD-MM-YYYY, DD/MM/YY, 15 March, etc.
-4. If partial info matches 2-3 people, ask for more detail.
-5. Response format:
-    - If confident match found: "MATCH_FOUND: [member_name]"
-    - If multiple possible matches: "MULTIPLE_MATCHES: [list names] - Please specify which one"
-    - If partial match needs clarification: "NEED_MORE_INFO: [specific question]"
-    - Only use "NO_MATCH" if absolutely no reasonable connection found.
+TASK: Check if the user's name and date of birth match ANY member in the database.
 
-REMEMBER: Be generous! It's better to authenticate a real member with partial info than to reject them.
+MATCHING RULES (BE LENIENT):
+1. NAME: Accept partial names, nicknames, first name only, last name only, typos
+   - "gopal" should match "Gopal Sharma" or "Gopal Kumar" etc.
+   - "john" should match "John Doe" or "Jonathan Smith" etc.
+   
+2. DATE: Accept any date format for the same actual date
+   - "31/03/1975" = "31-03-1975" = "March 31, 1975" = "31 Mar 1975"
+   - Be flexible with year format: 75 = 1975
+   
+3. MATCH LOGIC: 
+   - If name part matches AND date matches = AUTHENTICATE
+   - If name matches multiple people, ask which specific person
+   - If no reasonable match found = NO MATCH
+
+RESPONSE FORMAT (EXACTLY):
+- If found: "MATCH_FOUND: [Full Name from Database]"
+- If multiple matches: "MULTIPLE_MATCHES: [Name1, Name2] - Which person are you?"
+- If need clarification: "NEED_MORE_INFO: [specific question]"
+- If no match: "NO_MATCH"
+
+Now check: Does "{user_input}" match any member name and DOB in the database above?
 """
-    return call_llm(auth_prompt, max_tokens=300)
+    return call_llm(auth_prompt, max_tokens=200)
 
 def handle_authenticated_query(question, member_data, content, conversation_history):
     """Handle an authenticated user's query using EO Goa conversational style."""
-    # Check for greeting first
-    greeting_response = detect_greeting(question)
-    if greeting_response:
-        member_name = member_data.get('name', 'there')
-        return f"{greeting_response}\n\n*Welcome back, {member_name}!* 😊\n\nHow may I assist you with EO Goa today?"
+    # Check for greeting first (only for short messages)
+    if len(question.split()) <= 3:
+        greeting_response = detect_greeting(question)
+        if greeting_response:
+            member_name = member_data.get('name', 'there')
+            return f"{greeting_response}\n\n*Welcome back, {member_name}!* 😊\n\nHow may I assist you with EO Goa today?"
     
     # Check for help request
     if detect_help_request(question):
@@ -213,12 +245,11 @@ def handle_authenticated_query(question, member_data, content, conversation_hist
     # Build conversation context
     history_context = "\n".join([f"{msg['role']}: {msg['content']}" for msg in conversation_history[-6:]])
 
+    # Enhanced query handling - let LLM process everything from content.md
     query_prompt = f"""
 An authenticated EO Goa member has asked: "{question}"
 
-Your task is to answer this question using the provided content/FAQ, maintaining the friendly EO Goa receptionist tone.
-
-Available Content/FAQ:
+MEMBER DATA FROM CONTENT.MD (contains all birthdays, anniversaries, events, etc.):
 {content}
 
 Recent Conversation History:
@@ -226,15 +257,53 @@ Recent Conversation History:
 
 Member Information:
 - Authenticated Member: {member_data.get('name', 'N/A')}
+- Current Month: August (month 8)
+- Current Date: August 17, 2025
+- Current Week: August 17-23, 2025
 
-Instructions:
-- Answer based on the content provided
-- If the information isn't available, politely say so and offer to help with other EO-related queries
-- Maintain a warm, professional, entrepreneurial tone
-- Keep responses concise for WhatsApp
-- Use appropriate formatting and emojis
+TASK: Answer the user's question by extracting relevant information from the MEMBER DATA above.
+
+IMPORTANT - UNDERSTAND THE DATA STRUCTURE:
+- EO MEMBERS: People mentioned as "was born on" (main members like Sandeep Verenkar, Siddharth Goel, etc.)
+- FAMILY MEMBERS: 
+  * SPOUSES: "His/Her spouse [Name] was born on"
+  * CHILDREN: "They have [number] child/children: [Name], born on"
+
+SPECIFIC INSTRUCTIONS:
+
+1. For MEMBER BIRTHDAY queries (asking about "members" birthday):
+   - ONLY include EO members (those with "was born on" as main entry)
+   - DO NOT include spouses or children
+   - Format as: "🎂 *Member Name* - [Date]"
+
+2. For FAMILY MEMBER BIRTHDAY queries (asking about "family members" or "spouses" or "children"):
+   - ONLY include spouses and children 
+   - DO NOT include main EO members
+   - Format as: "🎂 *Family Member Name* ([relationship] of [Member Name]) - [Date]"
+   - Example: "🎂 *Sonali* (spouse of Sandeep Verenkar) - December 9th"
+
+3. For GENERAL BIRTHDAY queries (asking about "birthdays" without specifying):
+   - Include BOTH members and family members
+   - Clearly separate them in sections:
+     "*EO Members:*" and "*Family Members:*"
+
+4. For TIME-BASED queries:
+   - "this week" = August 17-23, 2025
+   - "this month" = August 2025
+   - "today" = August 17, 2025
+
+5. If NO matches found:
+   - State clearly what was searched for and timeframe
+
+6. RESPONSE FORMAT:
+   - Use WhatsApp formatting (*bold*, _italic_)
+   - Use appropriate emojis (🎂 for birthdays, 💒 for anniversaries)
+   - Keep concise but complete
+   - Professional EO Goa tone
+
+Now extract and provide the requested information from the member data above, making sure to distinguish between EO members and their family members.
 """
-    return call_llm(query_prompt, max_tokens=400)
+    return call_llm(query_prompt, max_tokens=600)
 
 # --- Routes ---
 
@@ -290,7 +359,7 @@ Join a global community by entrepreneurs, for entrepreneurs, designed to help bu
 
         # --- 3. Handle Unauthenticated Users ---
         else:
-            # Try to authenticate first
+            # Always try to authenticate first for unauthenticated users
             auth_result = authenticate_user(message_body, content)
             
             if auth_result.startswith("MATCH_FOUND:"):
@@ -313,15 +382,7 @@ I'm here to help you with our entrepreneur community. """
                     answer = handle_authenticated_query(question, session['member_data'], content, session['conversation_history'])
                     response_text = f"{welcome_msg}\n\nRegarding your earlier question:\n> \"_{question}_\"\n\n{answer}"
                 else:
-                    # Check if their auth message was also a greeting or help request
-                    greeting_response = detect_greeting(message_body)
-                    if greeting_response:
-                        response_text = f"{welcome_msg}\n\nHow may I assist you today? 😊"
-                    elif detect_help_request(message_body):
-                        capabilities = get_bot_capabilities()
-                        response_text = f"{welcome_msg}\n\n{capabilities}"
-                    else:
-                        response_text = f"{welcome_msg}\n\nHow may I assist you today? Feel free to ask about events, members, or anything EO Goa related!"
+                    response_text = f"{welcome_msg}\n\nHow may I assist you today? Feel free to ask about events, members, birthdays, or anything EO Goa related! 😊"
 
             elif auth_result.startswith("MULTIPLE_MATCHES:") or auth_result.startswith("NEED_MORE_INFO:"):
                 # Authentication in progress
@@ -331,9 +392,27 @@ I'm here to help you with our entrepreneur community. """
             else: # NO_MATCH
                 session['auth_attempts'] += 1
 
-                # If this was their first message, treat it as a question
-                if session['auth_attempts'] == 1 and not session.get('pending_question'):
-                    # Check if it's a greeting - provide friendly response
+                # Check if this looks like authentication data (contains comma, has numbers, etc.)
+                looks_like_auth = any([
+                    ',' in message_body and any(c.isdigit() for c in message_body),
+                    any(c.isdigit() for c in message_body) and len(message_body.split()) >= 2,
+                    '/' in message_body or '-' in message_body
+                ])
+
+                if looks_like_auth or session['auth_attempts'] > 1:
+                    # This appears to be a failed authentication attempt
+                    if session['auth_attempts'] >= 3:
+                        response_text = "❌ *Authentication failed* after multiple attempts. Please contact the admin or type 'reset' to start over."
+                        session.pop('pending_question', None)
+                    else:
+                        attempts_left = 3 - session['auth_attempts']
+                        response_text = f"""❌ I couldn't match those details in our member database.
+
+Please try again with your *full name and date of birth*.
+
+_You have {attempts_left} attempt(s) remaining._"""
+                else:
+                    # This is likely a question, not authentication data
                     greeting_response = detect_greeting(message_body)
                     if greeting_response:
                         response_text = f"""{greeting_response}
@@ -348,18 +427,6 @@ I'd love to help you explore our entrepreneur community!
 > \"_{message_body}_\"
 
 🔐 First, I need to verify your identity. Please provide your *name and date of birth* to continue (e.g., *John Doe, 15-03-1985*)."""
-                else:
-                    # Genuine failed authentication attempt
-                    if session['auth_attempts'] >= 3:
-                        response_text = "❌ *Authentication failed* after multiple attempts. Please contact the admin or type 'reset' to start over."
-                        session.pop('pending_question', None)
-                    else:
-                        attempts_left = 3 - session['auth_attempts']
-                        response_text = f"""❌ I couldn't match those details in our member database.
-
-Please try again with your *full name and date of birth*.
-
-_You have {attempts_left} attempt(s) remaining._"""
 
     except Exception as e:
         logger.error(f"Error in webhook for {phone_number}: {e}", exc_info=True)
